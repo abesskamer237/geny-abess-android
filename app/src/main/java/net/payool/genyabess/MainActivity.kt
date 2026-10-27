@@ -351,7 +351,7 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 hasLoadedPage = true
-                maybeAutoLogin(url)
+                skipResellerLoginSection(url)
                 progress.visibility = View.GONE
                 swipe.isRefreshing = false
                 splashPanel.animate().alpha(0f).setDuration(180).withEndAction {
@@ -404,6 +404,14 @@ class MainActivity : Activity() {
         web.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             startDownload(url, userAgent, contentDisposition, mimeType)
         })
+    }
+
+    // Open the public sales content first; the reseller login form remains available on the website.
+    private fun skipResellerLoginSection(url: String) {
+        val uri = Uri.parse(url)
+        if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net") return
+        val script = "(function(){var find=function(){var nodes=document.querySelectorAll('h1,h2,h3');for(var i=0;i<nodes.length;i++){if((nodes[i].innerText||'').toLowerCase().includes('votre internet')){nodes[i].scrollIntoView({behavior:'instant',block:'start'});return true;}}return false;};if(!find()){setTimeout(find,250);setTimeout(find,800);}})();"
+        web.evaluateJavascript(script, null)
     }
 
     // Credentials are entered by the user once and encrypted with an Android Keystore AES key.
