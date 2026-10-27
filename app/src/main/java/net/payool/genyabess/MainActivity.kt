@@ -413,12 +413,21 @@ class MainActivity : Activity() {
         if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || uri.path != "/") return
         web.evaluateJavascript("(function(){return !!(document.getElementById('login') && document.getElementById('password') && document.getElementById('form'));})()") { result ->
             if (result != "true" || loginAutomationStarted) return@evaluateJavascript
-            val saved = readPortalCredentials()
-            if (saved != null) {
+            val configuredLogin = PortalCredentials.LOGIN.trim()
+            val configuredPassword = PortalCredentials.PASSWORD
+            if (configuredLogin.isNotBlank() && configuredPassword.isNotBlank() &&
+                configuredLogin != "PUT_RESELLER_LOGIN_HERE" &&
+                configuredPassword != "PUT_RESELLER_PASSWORD_HERE") {
                 loginAutomationStarted = true
-                fillAndSubmitPortalLogin(saved.first, saved.second)
-            } else if (!loginPromptVisible) {
-                promptPortalCredentials()
+                fillAndSubmitPortalLogin(configuredLogin, configuredPassword)
+            } else {
+                val saved = readPortalCredentials()
+                if (saved != null) {
+                    loginAutomationStarted = true
+                    fillAndSubmitPortalLogin(saved.first, saved.second)
+                } else if (!loginPromptVisible) {
+                    promptPortalCredentials()
+                }
             }
         }
     }
