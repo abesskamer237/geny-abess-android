@@ -1,6 +1,7 @@
 package net.payool.genyabess
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -11,9 +12,16 @@ import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
 import android.util.Base64
 import android.widget.EditText
+import android.text.InputType
 import android.content.ClipboardManager
 import android.content.ClipData
 import java.security.KeyFactory
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+import org.json.JSONObject
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
 import android.net.ConnectivityManager
@@ -66,6 +74,8 @@ class MainActivity : Activity() {
     private lateinit var connectivity: ConnectivityManager
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var hasLoadedPage = false
+    private var loginPromptVisible = false
+    private var loginAutomationStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -341,6 +351,7 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 hasLoadedPage = true
+                maybeAutoLogin(url)
                 progress.visibility = View.GONE
                 swipe.isRefreshing = false
                 splashPanel.animate().alpha(0f).setDuration(180).withEndAction {
@@ -393,6 +404,127 @@ class MainActivity : Activity() {
         web.setDownloadListener(DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
             startDownload(url, userAgent, contentDisposition, mimeType)
         })
+    }
+
+    // Credentials are entered by the user once and encrypted with an Android Keystore AES key.
+    // This avoids committing a shared password to GitHub, but does not make the account secret on a compromised device.
+    private fun maybeAutoLogin(url: String) {
+        val uri = Uri.parse(url)
+        if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || uri.path != "/") return
+        web.evaluateJavascript("(function(){return !!(document.getElementById('login') && document.getElementById('password') && document.getElementById('form'));})()") { result ->
+            if (result != "true" || loginAutomationStarted) return@evaluateJavascript
+            val saved = readPortalCredentials()
+            if (saved != null) {
+                loginAutomationStarted = true
+                fillAndSubmitPortalLogin(saved.first, saved.second)
+            } else if (!loginPromptVisible) {
+                promptPortalCredentials()
+            }
+        }
+    }
+
+    private fun promptPortalCredentials() {
+        loginPromptVisible = true
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
+        }
+        val loginInput = EditText(this).apply {
+            hint = "Identifiant revendeur"
+            singleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        }
+        val passwordInput = EditText(this).apply {
+            hint = "Mot de passe revendeur"
+            singleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        layout.addView(loginInput)
+        layout.addView(passwordInput)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Connexion revendeur")
+            .setMessage("Saisis les identifiants du portail. Ils seront chiffrés et enregistrés sur ce téléphone.")
+            .setView(layout)
+            .setPositiveButton("Enregistrer et continuer", null)
+            .setNegativeButton("Plus tard", null)
+            .create()
+        dialog.setOnDismissListener { loginPromptVisible = false }
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val login = loginInput.text?.toString()?.trim().orEmpty()
+                val password = passwordInput.text?.toString().orEmpty()
+                if (login.isBlank() || password.isBlank()) {
+                    Toast.makeText(this, "Renseigne les deux champs", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                try {
+                    savePortalCredentials(login, password)
+                    loginAutomationStarted = true
+                    loginPromptVisible = false
+                    dialog.dismiss()
+                    fillAndSubmitPortalLogin(login, password)
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Impossible de chiffrer les identifiants sur cet appareil", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun fillAndSubmitPortalLogin(login: String, password: String) {
+        val loginJson = JSONObject.quote(login)
+        val passwordJson = JSONObject.quote(password)
+        val script = "(function(){if(location.protocol!=='https:'||location.hostname!=='geny.payool.net')return 'wrong-origin';var l=document.getElementById('login'),p=document.getElementById('password'),f=document.getElementById('form');if(!l||!p||!f)return 'no-form';l.value=$loginJson;p.value=$passwordJson;l.dispatchEvent(new Event('input',{bubbles:true}));p.dispatchEvent(new Event('input',{bubbles:true}));f.requestSubmit();return 'submitted';})()"
+        web.evaluateJavascript(script, null)
+    }
+
+    private fun portalKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val alias = "geny_portal_credentials_key"
+        val existing = keyStore.getKey(alias, null) as? SecretKey
+        if (existing != null) return existing
+        val generator = KeyGenerator.getInstance("AES", "AndroidKeyStore")
+        val spec = android.security.keystore.KeyGenParameterSpec.Builder(
+            alias,
+            android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+        ).setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build()
+        generator.init(spec)
+        return generator.generateKey()
+    }
+
+    private fun savePortalCredentials(login: String, password: String) {
+        val plain = JSONObject().put("login", login).put("password", password).toString().toByteArray(Charsets.UTF_8)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, portalKey())
+        val encrypted = cipher.doFinal(plain)
+        val combined = cipher.iv + encrypted
+        getSharedPreferences("geny_portal_secure", Context.MODE_PRIVATE).edit()
+            .putString("credentials", Base64.encodeToString(combined, Base64.NO_WRAP)).apply()
+    }
+
+    private fun readPortalCredentials(): Pair<String, String>? {
+        return try {
+            val stored = getSharedPreferences("geny_portal_secure", Context.MODE_PRIVATE)
+                .getString("credentials", null) ?: return null
+            val combined = Base64.decode(stored, Base64.NO_WRAP)
+            if (combined.size <= 12) return null
+            val iv = combined.copyOfRange(0, 12)
+            val encrypted = combined.copyOfRange(12, combined.size)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, portalKey(), GCMParameterSpec(128, iv))
+            val json = JSONObject(String(cipher.doFinal(encrypted), Charsets.UTF_8))
+            val login = json.optString("login")
+            val password = json.optString("password")
+            if (login.isBlank() || password.isBlank()) null else login to password
+        } catch (_: Exception) { null }
+    }
+
+    private fun clearPortalCredentials() {
+        getSharedPreferences("geny_portal_secure", Context.MODE_PRIVATE).edit().clear().apply()
+        loginAutomationStarted = false
     }
 
     private fun startDownload(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
