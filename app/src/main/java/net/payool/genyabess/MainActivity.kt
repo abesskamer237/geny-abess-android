@@ -54,6 +54,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.PopupMenu
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 class MainActivity : Activity() {
@@ -76,6 +77,8 @@ class MainActivity : Activity() {
     private var hasLoadedPage = false
     private var loginPromptVisible = false
     private var loginAutomationStarted = false
+    private var lastPortalError: String = "Aucune erreur enregistrée"
+    private var lastHttpStatus: Int? = null
     private val portalLoginPrefs by lazy { getSharedPreferences("geny_portal_login_guard", Context.MODE_PRIVATE) }
     private val portalRetryDelayMs = 15L * 60L * 1000L
 
@@ -103,6 +106,16 @@ class MainActivity : Activity() {
         }
         root.addView(swipe, FrameLayout.LayoutParams(-1, -1))
         root.addView(progress, FrameLayout.LayoutParams(-1, dp(3), Gravity.TOP))
+        val toolsButton = actionButton("Outils") { showToolsMenu(root.findViewWithTag("geny_tools_anchor")) }
+        toolsButton.tag = "geny_tools_anchor"
+        toolsButton.textSize = 12f
+        toolsButton.minHeight = dp(40)
+        toolsButton.minimumHeight = dp(40)
+        toolsButton.layoutParams = FrameLayout.LayoutParams(-2, dp(40), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(12)
+            marginEnd = dp(12)
+        }
+        root.addView(toolsButton)
 
         offlinePanel = messagePanel(
             icon = android.R.drawable.stat_notify_error,
@@ -305,18 +318,19 @@ class MainActivity : Activity() {
             domStorageEnabled = true
             databaseEnabled = true
             allowFileAccess = false
-            allowContentAccess = true
+            allowContentAccess = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             builtInZoomControls = false
             displayZoomControls = false
+            setSupportZoom(false)
             loadWithOverviewMode = true
             useWideViewPort = true
             safeBrowsingEnabled = true
         }
         CookieManager.getInstance().setAcceptCookie(true)
-        // Third-party cookies remain disabled unless the website explicitly requires them.
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, false)
 
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -366,7 +380,17 @@ class MainActivity : Activity() {
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame && !isOnline()) showOffline(true)
+                if (request.isForMainFrame) {
+                    lastPortalError = "Erreur réseau " + error.errorCode + ": " + error.description
+                    if (!isOnline()) showOffline(true)
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: android.webkit.WebResourceResponse) {
+                if (request.isForMainFrame) {
+                    lastHttpStatus = errorResponse.statusCode
+                    if (errorResponse.statusCode >= 400) lastPortalError = "Réponse HTTP " + errorResponse.statusCode
+                }
             }
 
             override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
@@ -595,6 +619,66 @@ class MainActivity : Activity() {
         loginAutomationStarted = false
     }
 
+    private fun showToolsMenu(anchor: View?) {
+        if (anchor == null) return
+        PopupMenu(this, anchor).apply {
+            menu.add("Accueil").setOnMenuItemClickListener { loadHome(); true }
+            menu.add("Actualiser").setOnMenuItemClickListener {
+                if (isOnline()) web.reload() else showOffline(true)
+                true
+            }
+            menu.add("Diagnostic réseau et portail").setOnMenuItemClickListener { showDiagnostics(); true }
+            menu.add("Effacer les identifiants enregistrés").setOnMenuItemClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Effacer les identifiants ?")
+                    .setMessage("Les identifiants chiffrés seront supprimés de cet appareil. Tu devras les saisir à nouveau si une connexion revendeur est nécessaire.")
+                    .setNegativeButton("Annuler", null)
+                    .setPositiveButton("Effacer") { _, _ ->
+                        clearPortalCredentials()
+                        Toast.makeText(this@MainActivity, "Identifiants enregistrés supprimés", Toast.LENGTH_SHORT).show()
+                    }
+                    .show()
+                true
+            }
+            show()
+        }
+    }
+
+    private fun showDiagnostics() {
+        val network = connectivity.activeNetwork
+        val caps = network?.let { connectivity.getNetworkCapabilities(it) }
+        val transport = when {
+            caps == null -> "Aucun réseau actif"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Données mobiles"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "Autre réseau"
+        }
+        val online = isOnline()
+        val currentUri = Uri.parse(web.url ?: home)
+        val trustedPage = currentUri.scheme == "https" && currentUri.host?.lowercase() in internalHosts
+        val sessionCookiePresent = if (trustedPage) !CookieManager.getInstance().getCookie(home).isNullOrBlank() else false
+        val report = buildString {
+            append("Réseau : ").append(if (online) "Internet validé" else "Internet non validé").append("\n")
+            append("Transport : ").append(transport).append("\n")
+            append("Portail : ").append(currentUri.host ?: "inconnu").append("\n")
+            append("Domaine autorisé : ").append(if (trustedPage) "oui" else "non").append("\n")
+            append("Cookies du portail présents : ").append(if (sessionCookiePresent) "oui (ne garantit pas une session valide)" else "non ou indisponible").append("\n")
+            append("Dernier statut HTTP : ").append(lastHttpStatus?.toString() ?: "non disponible").append("\n")
+            append("Dernière erreur : ").append(lastPortalError)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Diagnostic Geny-Abess")
+            .setMessage(report)
+            .setPositiveButton("Copier le rapport") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Diagnostic Geny-Abess", report))
+                Toast.makeText(this, "Rapport copié sans identifiants ni cookies", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Fermer", null)
+            .show()
+    }
+
     private fun startDownload(url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
         try {
             val uri = Uri.parse(url)
@@ -610,7 +694,8 @@ class MainActivity : Activity() {
                 .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
                 .setAllowedOverMetered(true)
                 .setAllowedOverRoaming(false)
-            val cookies = CookieManager.getInstance().getCookie(url)
+            // Only forward first-party portal cookies to the trusted Geny host.
+            val cookies = if (uri.host?.lowercase() in internalHosts) CookieManager.getInstance().getCookie(url) else null
             if (!cookies.isNullOrBlank()) request.addRequestHeader("Cookie", cookies)
             request.addRequestHeader("User-Agent", userAgent ?: "Geny-Abess Android")
             if (!mimeType.isNullOrBlank()) request.setMimeType(mimeType)
