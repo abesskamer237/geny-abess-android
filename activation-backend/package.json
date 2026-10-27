@@ -1,0 +1,13 @@
+{
+  "name": "geny-abess-activation-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
+    "better-sqlite3": "^11.8.1",
+    "fastify": "^5.2.1"
+  }
+}
