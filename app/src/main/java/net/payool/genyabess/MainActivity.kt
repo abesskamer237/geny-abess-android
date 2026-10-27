@@ -523,7 +523,7 @@ class MainActivity : Activity() {
 
     companion object {
         // Public verification key only. The private signing key must never be included in the APK/repository.
-        private const val ACTIVATION_PUBLIC_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9Jju2K3PeduwIbR4l6kgwiZnFNL+i3JZRSA95HRnDnHDKfXq+PfXeHE5kdAiHlILLxvIdUGELT/zZWkZf4blye0M2Q8jJ79MhLLtY+FFtCbCkruKSnUjcSe/d0ewTXRLqKub+/gsEYDhf2ewMrqW1DSmiPc0QV11+rVv6WoCgd3XHx+F4qP86JuJnDpMhez7BikQI1/FRPPSouYKLCOIUO2JNGPz9JGtWCnq0qV/0Y6h9YmGO/mc5y2wgn6Z03oKByzTx3Tu6nQh0NN8uEwRmENhr+V/bFOxMeDMBLjEcqV+tkv22vKeaNyuaZ8FfHmwvdC8SyQEBncQKoJOBZ7eFrjZEd4dHVd5GfBfisPYx/vhCuAE/Z0rNmoNbUceITndLZcZHuxYipEt7j2sAOGaNwgwYskfCQnxSQ8ExMtnik0qqJBKOAJ4wg/hSJoJ5h45EJsfRzbv1w1l/OGJF4NrHwh2IWqOECkJwrI1QAhlH0C4EekFwbEW39r6xPmKAeYjAgMBAAE="
+        private const val ACTIVATION_PUBLIC_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA0kERdsCWLZA95JA62TghJ9aiI5xpgfVP+gzg9f/eoB8K0fUSF7PSmtuCJVT1tNCSyH+YGM73QnaVKjfAPC4dRfPPiHM/rXNuF94s0fFYixzAWIE014Po+E7xXYVUCGzPVELp3nFHb7Jr4BU9ukiVD11COrBzBZN0CCTLpLPci9tbRKxl4Ou5ajLAfwzJfvS4II3kPX+Lej901oeZ8k9uW7j2HyeNhJvycJtwFORC59QoH1WTbXdaDSR32cYQEeFyaTW3M1lHaeeTseX0VnihFnJqnfCxQI5rkHes6aUD3OsRwLJ+h0llVxiMIACBQOgYsAPdXhRjiE+vs42Yyy9xJ5fQPTec0Qo2PfOOCHS95qLJ+1B8yh6aMOPOUz21slGuNLVzcODm4yPKlElvgaw/t1nviu773QlsNDZBC1Oh8mC7X67dHCP5lXIlWpYgjQg77aOKWdSnIJoIcGEcthwpPBToOYPlrnRsrrTAzr92ifkQp2V9rUBw2ATR9HOesdYHAgMBAAE="
     }
 
     @Deprecated("Deprecated in Android SDK")
