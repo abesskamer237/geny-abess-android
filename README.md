@@ -42,3 +42,34 @@ Requires JDK 17, Android SDK Platform 35 and Gradle 8.11.1:
 ```bash
 gradle --no-daemon :app:assembleDebug
 ```
+
+
+## Accès privé : codes d’activation liés à un téléphone
+
+L'application demande maintenant un code d'activation signé avant d'ouvrir le site. Chaque code contient l'identifiant Android de l'appareil et peut être limité dans le temps. Un code créé pour un téléphone ne doit pas fonctionner sur un autre.
+
+### Émettre un code
+1. Sur ton ordinateur privé, crée un dossier `private/` à la racine du dépôt local et place-y `geny-abess-private.pem`. **Ne pousse jamais ce fichier sur GitHub.**
+2. Installe Node.js 18 ou plus récent.
+3. Depuis la racine du dépôt, exécute :
+
+```bash
+node tools/issue-activation.js IDENTIFIANT_DU_TELEPHONE 365
+```
+
+Remplace `IDENTIFIANT_DU_TELEPHONE` par l'identifiant affiché dans l'écran de verrouillage. Le second argument est la durée en jours; utilise `never` pour une durée illimitée. Tu peux aussi fournir le chemin de la clé privée en troisième argument :
+
+```bash
+node tools/issue-activation.js IDENTIFIANT_DU_TELEPHONE 365 /chemin/vers/geny-abess-private.pem
+```
+
+Envoie le code généré au client de manière privée. Le client doit saisir le code dans l'application. Le bouton WhatsApp préremplit un message destiné à ABESS-OPS (+237 695 140 419).
+
+### Important — limites sans backend
+- La vérification de signature se fait dans l'application avec une clé publique; la clé privée de signature ne doit jamais être incluse dans l'APK ou le dépôt.
+- Le code est lié à l'identifiant Android fourni et peut expirer, mais l'application ne peut pas savoir si un code a été révoqué à distance ou si un même code a déjà été délivré à quelqu'un d'autre.
+- Une réinstallation, une réinitialisation du téléphone ou un identifiant Android modifié peut nécessiter une nouvelle activation.
+- Ce système n'est pas un remplacement d'une validation serveur. Pour une restriction robuste à un seul appareil et une révocation immédiate, il faudra plus tard un service d'activation avec base de données.
+
+### Protection de la clé privée
+Garde une copie chiffrée et sauvegardée hors du dépôt. Si la clé privée est perdue, les futures versions de l'application nécessiteront une nouvelle clé publique intégrée et un nouveau build. Ne partage jamais la clé privée dans un ticket, un chat public ou un commit.
