@@ -37,7 +37,13 @@ android {
     buildTypes {
         debug { applicationIdSuffix = ".debug"; versionNameSuffix = "-debug" }
         release {
-            isMinifyEnabled = false
+            // R8 obfuscation and shrinking raise reverse-engineering cost, but cannot make an APK impossible to inspect.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             val hasSigning = !System.getenv("GENY_KEYSTORE_PATH").isNullOrBlank() &&
                 !System.getenv("GENY_KEYSTORE_PASSWORD").isNullOrBlank() &&
                 !System.getenv("GENY_KEY_ALIAS").isNullOrBlank() &&
