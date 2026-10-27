@@ -440,12 +440,12 @@ class MainActivity : Activity() {
         }
         val loginInput = EditText(this).apply {
             hint = "Identifiant revendeur"
-            singleLine = true
+            isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         }
         val passwordInput = EditText(this).apply {
             hint = "Mot de passe revendeur"
-            singleLine = true
+            isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         layout.addView(loginInput)
