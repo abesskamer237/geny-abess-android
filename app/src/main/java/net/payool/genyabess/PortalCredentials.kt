@@ -7,6 +7,6 @@ package net.payool.genyabess
  * embedded in source/APK can be extracted. Never commit real credentials to a public repository.
  */
 internal object PortalCredentials {
-    const val LOGIN = "PUT_RESELLER_LOGIN_HERE"
-    const val PASSWORD = "PUT_RESELLER_PASSWORD_HERE"
+    const val LOGIN = "abess237"
+    const val PASSWORD = "2e6d-gjpd-z43y-vc6p"
 }
