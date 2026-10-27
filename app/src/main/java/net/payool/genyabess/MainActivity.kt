@@ -8,6 +8,14 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.provider.Settings
+import android.util.Base64
+import android.widget.EditText
+import android.content.ClipboardManager
+import android.content.ClipData
+import java.security.KeyFactory
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -48,6 +56,11 @@ class MainActivity : Activity() {
     private lateinit var progress: ProgressBar
     private lateinit var offlinePanel: LinearLayout
     private lateinit var splashPanel: LinearLayout
+    private lateinit var activationPanel: LinearLayout
+    private lateinit var activationCodeInput: EditText
+    private lateinit var deviceIdText: TextView
+    private val deviceId: String by lazy { Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown" }
+    private val activationPrefs by lazy { getSharedPreferences("geny_access", Context.MODE_PRIVATE) }
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private val fileRequest = 1042
     private lateinit var connectivity: ConnectivityManager
@@ -121,10 +134,17 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { topMargin = dp(28) })
         }
         root.addView(splashPanel, FrameLayout.LayoutParams(-1, -1))
+        activationPanel = buildActivationPanel().apply { visibility = View.GONE }
+        root.addView(activationPanel, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
 
         configureWebView()
         registerConnectivity()
+        if (!hasValidStoredActivation()) {
+            splashPanel.visibility = View.GONE
+            activationPanel.visibility = View.VISIBLE
+            return
+        }
         if (isOnline()) {
             if (savedInstanceState == null) loadHome() else {
                 val restored = web.restoreState(savedInstanceState)
@@ -136,6 +156,134 @@ class MainActivity : Activity() {
         } else {
             splashPanel.visibility = View.GONE
             showOffline(false)
+        }
+    }
+
+    private fun buildActivationPanel(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setBackgroundColor(Color.rgb(20, 35, 59))
+        setPadding(dp(28), dp(24), dp(28), dp(24))
+
+        addView(ImageView(this@MainActivity).apply {
+            setImageResource(R.drawable.ic_launcher)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }, LinearLayout.LayoutParams(dp(88), dp(88)))
+
+        addView(TextView(this@MainActivity).apply {
+            text = "Geny-Abess — Accès privé"
+            textSize = 23f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, dp(8))
+        })
+
+        addView(TextView(this@MainActivity).apply {
+            text = "Un code d’activation personnel est requis pour utiliser cette application."
+            textSize = 14f
+            setTextColor(Color.rgb(205, 216, 228))
+            gravity = Gravity.CENTER
+        })
+
+        addView(TextView(this@MainActivity).apply {
+            text = "IDENTIFIANT DE CET APPAREIL"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(51, 214, 170))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(22), 0, dp(6))
+        })
+
+        deviceIdText = TextView(this@MainActivity).apply {
+            text = deviceId
+            textSize = 13f
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(35, 52, 76))
+                cornerRadius = dp(10).toFloat()
+            }
+        }
+        addView(deviceIdText, LinearLayout.LayoutParams(-1, -2))
+
+        addView(actionButton("Copier l’identifiant") {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Identifiant Geny-Abess", deviceId))
+            Toast.makeText(this@MainActivity, "Identifiant copié", Toast.LENGTH_SHORT).show()
+        })
+
+        activationCodeInput = EditText(this@MainActivity).apply {
+            hint = "Colle ton code d’activation"
+            textSize = 14f
+            singleLine = false
+            minLines = 2
+            maxLines = 3
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(160, 176, 194))
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(35, 52, 76))
+                cornerRadius = dp(10).toFloat()
+            }
+        }
+        addView(activationCodeInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+
+        addView(actionButton("Activer l’application") {
+            val code = activationCodeInput.text?.toString()?.trim().orEmpty()
+            if (code.isEmpty()) {
+                Toast.makeText(this@MainActivity, "Saisis ton code d’activation", Toast.LENGTH_SHORT).show()
+            } else if (validateActivationCode(code, deviceId)) {
+                activationPrefs.edit().putString("signed_activation", code).apply()
+                activationPanel.visibility = View.GONE
+                Toast.makeText(this@MainActivity, "Activation réussie", Toast.LENGTH_SHORT).show()
+                loadHome()
+            } else {
+                Toast.makeText(this@MainActivity, "Code invalide, expiré ou prévu pour un autre téléphone", Toast.LENGTH_LONG).show()
+            }
+        })
+
+        addView(actionButton("Demander un accès sur WhatsApp") {
+            val message = "Bonjour ABESS-OPS, je souhaite obtenir un accès Geny-Abess. Identifiant de mon téléphone : $deviceId"
+            openExternal(Uri.parse("https://wa.me/237695140419?text=" + Uri.encode(message)))
+        })
+
+        addView(TextView(this@MainActivity).apply {
+            text = "Un code est lié à cet identifiant. Ne le partage pas."
+            textSize = 12f
+            setTextColor(Color.rgb(160, 176, 194))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
+        })
+    }
+
+    private fun hasValidStoredActivation(): Boolean {
+        val code = activationPrefs.getString("signed_activation", null) ?: return false
+        return validateActivationCode(code, deviceId)
+    }
+
+    private fun validateActivationCode(code: String, expectedDeviceId: String): Boolean {
+        return try {
+            val parts = code.trim().split(".")
+            if (parts.size != 2) return false
+            val payloadBytes = Base64.decode(parts[0], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val signatureBytes = Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val payload = String(payloadBytes, Charsets.UTF_8)
+            val fields = payload.split("|")
+            if (fields.size != 4 || fields[0] != "GENY1" || fields[1] != expectedDeviceId) return false
+            val expiresAt = fields[2].toLongOrNull() ?: return false
+            if (expiresAt != 0L && System.currentTimeMillis() / 1000L > expiresAt) return false
+
+            val publicKeyDer = Base64.decode(ACTIVATION_PUBLIC_KEY, Base64.DEFAULT)
+            val publicKey = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(publicKeyDer))
+            val verifier = Signature.getInstance("SHA256withRSA")
+            verifier.initVerify(publicKey)
+            verifier.update(payloadBytes)
+            verifier.verify(signatureBytes)
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -372,6 +520,11 @@ class MainActivity : Activity() {
         }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    companion object {
+        // Public verification key only. The private signing key must never be included in the APK/repository.
+        private const val ACTIVATION_PUBLIC_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9Jju2K3PeduwIbR4l6kgwiZnFNL+i3JZRSA95HRnDnHDKfXq+PfXeHE5kdAiHlILLxvIdUGELT/zZWkZf4blye0M2Q8jJ79MhLLtY+FFtCbCkruKSnUjcSe/d0ewTXRLqKub+/gsEYDhf2ewMrqW1DSmiPc0QV11+rVv6WoCgd3XHx+F4qP86JuJnDpMhez7BikQI1/FRPPSouYKLCOIUO2JNGPz9JGtWCnq0qV/0Y6h9YmGO/mc5y2wgn6Z03oKByzTx3Tu6nQh0NN8uEwRmENhr+V/bFOxMeDMBLjEcqV+tkv22vKeaNyuaZ8FfHmwvdC8SyQEBncQKoJOBZ7eFrjZEd4dHVd5GfBfisPYx/vhCuAE/Z0rNmoNbUceITndLZcZHuxYipEt7j2sAOGaNwgwYskfCQnxSQ8ExMtnik0qqJBKOAJ4wg/hSJoJ5h45EJsfRzbv1w1l/OGJF4NrHwh2IWqOECkJwrI1QAhlH0C4EekFwbEW39r6xPmKAeYjAgMBAAE="
+    }
 
     @Deprecated("Deprecated in Android SDK")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
