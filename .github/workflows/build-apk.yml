@@ -11,8 +11,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      HAS_RELEASE_SIGNING: ${{ secrets.GENY_KEYSTORE_BASE64 != '' && secrets.GENY_KEYSTORE_PASSWORD != '' && secrets.GENY_KEY_ALIAS != '' && secrets.GENY_KEY_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,15 +34,24 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare production signing key
-        if: env.HAS_RELEASE_SIGNING == 'true'
+        id: signing
         env:
           GENY_KEYSTORE_BASE64: ${{ secrets.GENY_KEYSTORE_BASE64 }}
+          GENY_KEYSTORE_PASSWORD: ${{ secrets.GENY_KEYSTORE_PASSWORD }}
+          GENY_KEY_ALIAS: ${{ secrets.GENY_KEY_ALIAS }}
+          GENY_KEY_PASSWORD: ${{ secrets.GENY_KEY_PASSWORD }}
         run: |
-          echo "$GENY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/geny-release.jks"
-          echo "GENY_KEYSTORE_PATH=$RUNNER_TEMP/geny-release.jks" >> "$GITHUB_ENV"
+          if [ -n "$GENY_KEYSTORE_BASE64" ] && [ -n "$GENY_KEYSTORE_PASSWORD" ] && [ -n "$GENY_KEY_ALIAS" ] && [ -n "$GENY_KEY_PASSWORD" ]; then
+            echo "$GENY_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/geny-release.jks"
+            echo "GENY_KEYSTORE_PATH=$RUNNER_TEMP/geny-release.jks" >> "$GITHUB_ENV"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Production signing secrets not configured; building debug APK only."
+          fi
 
       - name: Build signed production APK
-        if: env.HAS_RELEASE_SIGNING == 'true'
+        if: steps.signing.outputs.available == 'true'
         env:
           GENY_KEYSTORE_PASSWORD: ${{ secrets.GENY_KEYSTORE_PASSWORD }}
           GENY_KEY_ALIAS: ${{ secrets.GENY_KEY_ALIAS }}
@@ -60,7 +67,7 @@ jobs:
           retention-days: 14
 
       - name: Upload production APK
-        if: env.HAS_RELEASE_SIGNING == 'true'
+        if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Geny-Abess-production-APK
@@ -69,5 +76,5 @@ jobs:
           retention-days: 30
 
       - name: Explain unsigned production build
-        if: env.HAS_RELEASE_SIGNING != 'true'
-        run: echo "Production APK not generated: configure all four GENY_* GitHub Actions secrets to sign a release."
+        if: steps.signing.outputs.available != 'true'
+        run: echo "Production APK not generated. Add GENY_KEYSTORE_BASE64, GENY_KEYSTORE_PASSWORD, GENY_KEY_ALIAS and GENY_KEY_PASSWORD to GitHub Actions secrets."
