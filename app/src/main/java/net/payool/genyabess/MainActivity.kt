@@ -218,7 +218,7 @@ class MainActivity : Activity() {
         activationCodeInput = EditText(this@MainActivity).apply {
             hint = "Colle ton code d’activation"
             textSize = 14f
-            singleLine = false
+            isSingleLine = false
             minLines = 2
             maxLines = 3
             setTextColor(Color.WHITE)
