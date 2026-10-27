@@ -1,4 +1,5 @@
 name: Build Geny-Abess APK
+# Builds and publishes APK artifacts whenever main is updated.
 
 on:
   push:
