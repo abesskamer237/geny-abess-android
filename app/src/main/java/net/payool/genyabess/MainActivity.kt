@@ -351,6 +351,7 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 hasLoadedPage = true
+                maybeAutoLogin(url)
                 skipResellerLoginSection(url)
                 progress.visibility = View.GONE
                 swipe.isRefreshing = false
@@ -410,7 +411,7 @@ class MainActivity : Activity() {
     private fun skipResellerLoginSection(url: String) {
         val uri = Uri.parse(url)
         if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net") return
-        val script = "(function(){var find=function(){var nodes=document.querySelectorAll('h1,h2,h3');for(var i=0;i<nodes.length;i++){if((nodes[i].innerText||'').toLowerCase().includes('votre internet')){nodes[i].scrollIntoView({behavior:'instant',block:'start'});return true;}}return false;};if(!find()){setTimeout(find,250);setTimeout(find,800);}})();"
+        val script = "(function(){if(document.getElementById('login')&&document.getElementById('password')&&document.getElementById('form'))return 'login-required';var find=function(){var nodes=document.querySelectorAll('h1,h2,h3');for(var i=0;i<nodes.length;i++){if((nodes[i].innerText||'').toLowerCase().includes('votre internet')){nodes[i].scrollIntoView({behavior:'instant',block:'start'});return true;}}return false;};if(!find()){setTimeout(find,350);setTimeout(find,1000);setTimeout(find,1800);}})();"
         web.evaluateJavascript(script, null)
     }
 
