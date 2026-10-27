@@ -6,5 +6,5 @@ local.properties
 *.iml
 
 # Keep activation signing material out of Git
-private/
+/private/
 *.pem
