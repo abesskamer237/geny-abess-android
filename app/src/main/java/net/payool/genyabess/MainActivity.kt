@@ -419,24 +419,39 @@ class MainActivity : Activity() {
     // This avoids committing a shared password to GitHub, but does not make the account secret on a compromised device.
     private fun maybeAutoLogin(url: String) {
         val uri = Uri.parse(url)
-        if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || uri.path != "/") return
-        web.evaluateJavascript("(function(){return !!(document.getElementById('login') && document.getElementById('password') && document.getElementById('form'));})()") { result ->
-            if (result != "true" || loginAutomationStarted) return@evaluateJavascript
+        if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || loginAutomationStarted) return
+
+        // The page can render the login form after onPageFinished. Poll briefly instead of
+        // silently giving up when the SPA has not inserted the fields yet.
+        val waitForForm = "(function(){return !!(document.getElementById('login')&&document.getElementById('password')&&document.getElementById('form'));})()"
+        web.evaluateJavascript(waitForForm) { result ->
+            if (loginAutomationStarted) return@evaluateJavascript
+            if (result != "true") {
+                web.postDelayed({
+                    if (!loginAutomationStarted && web.url == url) maybeAutoLogin(url)
+                }, 700)
+                return@evaluateJavascript
+            }
+
             val configuredLogin = PortalCredentials.LOGIN.trim()
             val configuredPassword = PortalCredentials.PASSWORD
-            if (configuredLogin.isNotBlank() && configuredPassword.isNotBlank() &&
+            val configuredCredentialsPresent = configuredLogin.isNotBlank() &&
+                configuredPassword.isNotBlank() &&
                 configuredLogin != "PUT_RESELLER_LOGIN_HERE" &&
-                configuredPassword != "PUT_RESELLER_PASSWORD_HERE") {
-                loginAutomationStarted = true
-                fillAndSubmitPortalLogin(configuredLogin, configuredPassword)
+                configuredPassword != "PUT_RESELLER_PASSWORD_HERE"
+
+            val saved = if (configuredCredentialsPresent) null else readPortalCredentials()
+            val credentials = if (configuredCredentialsPresent) {
+                configuredLogin to configuredPassword
             } else {
-                val saved = readPortalCredentials()
-                if (saved != null) {
-                    loginAutomationStarted = true
-                    fillAndSubmitPortalLogin(saved.first, saved.second)
-                } else if (!loginPromptVisible) {
-                    promptPortalCredentials()
-                }
+                saved
+            }
+
+            if (credentials != null) {
+                loginAutomationStarted = true
+                fillAndSubmitPortalLogin(credentials.first, credentials.second)
+            } else if (!loginPromptVisible) {
+                promptPortalCredentials()
             }
         }
     }
@@ -492,8 +507,13 @@ class MainActivity : Activity() {
     private fun fillAndSubmitPortalLogin(login: String, password: String) {
         val loginJson = JSONObject.quote(login)
         val passwordJson = JSONObject.quote(password)
-        val script = "(function(){if(location.protocol!=='https:'||location.hostname!=='geny.payool.net')return 'wrong-origin';var l=document.getElementById('login'),p=document.getElementById('password'),f=document.getElementById('form');if(!l||!p||!f)return 'no-form';l.value=$loginJson;p.value=$passwordJson;l.dispatchEvent(new Event('input',{bubbles:true}));p.dispatchEvent(new Event('input',{bubbles:true}));f.requestSubmit();return 'submitted';})()"
-        web.evaluateJavascript(script, null)
+        val script = "(function(){if(location.protocol!=='https:'||location.hostname!=='geny.payool.net')return 'wrong-origin';var l=document.getElementById('login'),p=document.getElementById('password'),f=document.getElementById('form');if(!l||!p||!f)return 'no-form';var set=function(el,value){var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;var setter=Object.getOwnPropertyDescriptor(proto,'value')?.set;if(setter)setter.call(el,value);else el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};set(l,$loginJson);set(p,$passwordJson);if(typeof f.requestSubmit==='function')f.requestSubmit();else f.submit();return 'submitted';})()"
+        web.evaluateJavascript(script) { result ->
+            if (result != "\"submitted\"") {
+                loginAutomationStarted = false
+                Toast.makeText(this, "Connexion automatique impossible : formulaire du portail introuvable.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun portalKey(): SecretKey {
