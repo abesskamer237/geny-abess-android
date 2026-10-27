@@ -16,7 +16,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    env_file: .env
+    environment:
+      ACTIVATION_DOMAIN: ${ACTIVATION_DOMAIN}
     ports:
       - "80:80"
       - "443:443"
