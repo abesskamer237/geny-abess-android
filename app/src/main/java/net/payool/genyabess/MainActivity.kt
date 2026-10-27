@@ -421,7 +421,7 @@ class MainActivity : Activity() {
 
     // Credentials are entered by the user once and encrypted with an Android Keystore AES key.
     // This avoids committing a shared password to GitHub, but does not make the account secret on a compromised device.
-    private fun maybeAutoLogin(url: String) {
+    private fun maybeAutoLogin(url: String, formCheckAttempt: Int = 0) {
         val uri = Uri.parse(url)
         if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || loginAutomationStarted) return
 
@@ -440,7 +440,13 @@ class MainActivity : Activity() {
                 return@evaluateJavascript
             }
             if (!state.optBoolean("form")) {
-                web.postDelayed({ if (!loginAutomationStarted && web.url == url) maybeAutoLogin(url) }, 900)
+                // Some portal pages render slowly. Limit checks to five so a normal sales page
+                // never creates an endless JavaScript polling loop.
+                if (formCheckAttempt < 4) {
+                    web.postDelayed({
+                        if (!loginAutomationStarted && web.url == url) maybeAutoLogin(url, formCheckAttempt + 1)
+                    }, 700)
+                }
                 return@evaluateJavascript
             }
 
@@ -529,7 +535,10 @@ class MainActivity : Activity() {
                             // Login did not complete: preserve the attempt timestamp to prevent loops.
                             loginAutomationStarted = false
                         } else {
+                            // The login form disappeared, so the portal likely accepted the session.
+                            // Allow a future login only if the session later expires.
                             portalLoginPrefs.edit().remove("last_attempt").remove("blocked_until").apply()
+                            loginAutomationStarted = false
                         }
                     }
                 }, 1400)
