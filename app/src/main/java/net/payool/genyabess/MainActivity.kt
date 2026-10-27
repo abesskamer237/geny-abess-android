@@ -76,6 +76,8 @@ class MainActivity : Activity() {
     private var hasLoadedPage = false
     private var loginPromptVisible = false
     private var loginAutomationStarted = false
+    private val portalLoginPrefs by lazy { getSharedPreferences("geny_portal_login_guard", Context.MODE_PRIVATE) }
+    private val portalRetryDelayMs = 15L * 60L * 1000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -423,34 +425,33 @@ class MainActivity : Activity() {
         val uri = Uri.parse(url)
         if (uri.scheme != "https" || uri.host?.lowercase() != "geny.payool.net" || loginAutomationStarted) return
 
-        // The page can render the login form after onPageFinished. Poll briefly instead of
-        // silently giving up when the SPA has not inserted the fields yet.
-        val waitForForm = "(function(){return !!(document.getElementById('login')&&document.getElementById('password')&&document.getElementById('form'));})()"
-        web.evaluateJavascript(waitForForm) { result ->
+        val now = System.currentTimeMillis()
+        if (now < portalLoginPrefs.getLong("blocked_until", 0L)) return
+        val lastAttempt = portalLoginPrefs.getLong("last_attempt", 0L)
+        if (lastAttempt > 0L && now - lastAttempt < portalRetryDelayMs) return
+
+        val inspect = "(function(){var t=(document.body&&document.body.innerText||'').toLowerCase();return JSON.stringify({form:!!(document.getElementById('login')&&document.getElementById('password')&&document.getElementById('form')),locked:(t.includes('trop de tentatives')||t.includes('réessayez dans')||t.includes('try again in'))});})()"
+        web.evaluateJavascript(inspect) { raw ->
             if (loginAutomationStarted) return@evaluateJavascript
-            if (result != "true") {
-                web.postDelayed({
-                    if (!loginAutomationStarted && web.url == url) maybeAutoLogin(url)
-                }, 700)
+            val state = try { JSONObject(raw?.trim('"')?.replace("\\\"", "\"") ?: "{}") } catch (_: Exception) { JSONObject() }
+            if (state.optBoolean("locked")) {
+                portalLoginPrefs.edit().putLong("blocked_until", System.currentTimeMillis() + portalRetryDelayMs).apply()
+                Toast.makeText(this, "Limite de connexion détectée. Attends 15 minutes avant un nouvel essai.", Toast.LENGTH_LONG).show()
+                return@evaluateJavascript
+            }
+            if (!state.optBoolean("form")) {
+                web.postDelayed({ if (!loginAutomationStarted && web.url == url) maybeAutoLogin(url) }, 900)
                 return@evaluateJavascript
             }
 
             val configuredLogin = PortalCredentials.LOGIN.trim()
             val configuredPassword = PortalCredentials.PASSWORD
-            val configuredCredentialsPresent = configuredLogin.isNotBlank() &&
-                configuredPassword.isNotBlank() &&
-                configuredLogin != "PUT_RESELLER_LOGIN_HERE" &&
-                configuredPassword != "PUT_RESELLER_PASSWORD_HERE"
-
-            val saved = if (configuredCredentialsPresent) null else readPortalCredentials()
-            val credentials = if (configuredCredentialsPresent) {
-                configuredLogin to configuredPassword
-            } else {
-                saved
-            }
-
+            val configured = configuredLogin.isNotBlank() && configuredPassword.isNotBlank() &&
+                configuredLogin != "PUT_RESELLER_LOGIN_HERE" && configuredPassword != "PUT_RESELLER_PASSWORD_HERE"
+            val credentials = if (configured) configuredLogin to configuredPassword else readPortalCredentials()
             if (credentials != null) {
                 loginAutomationStarted = true
+                portalLoginPrefs.edit().putLong("last_attempt", System.currentTimeMillis()).apply()
                 fillAndSubmitPortalLogin(credentials.first, credentials.second)
             } else if (!loginPromptVisible) {
                 promptPortalCredentials()
@@ -494,10 +495,10 @@ class MainActivity : Activity() {
                 }
                 try {
                     savePortalCredentials(login, password)
-                    loginAutomationStarted = true
+                    loginAutomationStarted = false
                     loginPromptVisible = false
                     dialog.dismiss()
-                    fillAndSubmitPortalLogin(login, password)
+                    maybeAutoLogin(web.url ?: home)
                 } catch (_: Exception) {
                     Toast.makeText(this, "Impossible de chiffrer les identifiants sur cet appareil", Toast.LENGTH_LONG).show()
                 }
@@ -513,7 +514,25 @@ class MainActivity : Activity() {
         web.evaluateJavascript(script) { result ->
             if (result != "\"submitted\"") {
                 loginAutomationStarted = false
-                Toast.makeText(this, "Connexion automatique impossible : formulaire du portail introuvable.", Toast.LENGTH_LONG).show()
+                portalLoginPrefs.edit().remove("last_attempt").apply()
+                Toast.makeText(this, "Formulaire de connexion introuvable.", Toast.LENGTH_LONG).show()
+            } else {
+                web.postDelayed({
+                    val check = "(function(){var t=(document.body&&document.body.innerText||'').toLowerCase();return JSON.stringify({form:!!(document.getElementById('login')&&document.getElementById('password')&&document.getElementById('form')),locked:(t.includes('trop de tentatives')||t.includes('réessayez dans')||t.includes('try again in'))});})()"
+                    web.evaluateJavascript(check) { raw ->
+                        val state = try { JSONObject(raw?.trim('"')?.replace("\\\"", "\"") ?: "{}") } catch (_: Exception) { JSONObject() }
+                        if (state.optBoolean("locked")) {
+                            portalLoginPrefs.edit().putLong("blocked_until", System.currentTimeMillis() + portalRetryDelayMs).apply()
+                            loginAutomationStarted = false
+                            Toast.makeText(this, "Le portail limite les tentatives. Nouvel essai suspendu 15 minutes.", Toast.LENGTH_LONG).show()
+                        } else if (state.optBoolean("form")) {
+                            // Login did not complete: preserve the attempt timestamp to prevent loops.
+                            loginAutomationStarted = false
+                        } else {
+                            portalLoginPrefs.edit().remove("last_attempt").remove("blocked_until").apply()
+                        }
+                    }
+                }, 1400)
             }
         }
     }
