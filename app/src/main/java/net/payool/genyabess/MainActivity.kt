@@ -351,6 +351,8 @@ class MainActivity : Activity() {
 
             override fun onPageFinished(view: WebView, url: String) {
                 hasLoadedPage = true
+                // Persist first-party WebView cookies so a valid portal session can survive app restarts.
+                CookieManager.getInstance().flush()
                 maybeAutoLogin(url)
                 skipResellerLoginSection(url)
                 progress.visibility = View.GONE
