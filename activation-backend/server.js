@@ -81,16 +81,29 @@ app.post("/v1/activate", async (req, reply) => {
   const token = randomSecret(32);
   const ts = now();
   const transaction = db.transaction(() => {
-    if (!record.device_id) {
-      db.prepare("UPDATE access_codes SET device_id = ?, activated_at = ? WHERE id = ? AND device_id IS NULL")
+    const current = db.prepare("SELECT * FROM access_codes WHERE id = ?").get(record.id);
+    if (!current || current.revoked_at || (current.expires_at && current.expires_at <= ts)) {
+      return { error: "invalid_or_expired_code" };
+    }
+    if (current.device_id && current.device_id !== deviceId) {
+      return { error: "code_already_bound_to_another_device" };
+    }
+    if (!current.device_id) {
+      const bound = db.prepare("UPDATE access_codes SET device_id = ?, activated_at = ? WHERE id = ? AND device_id IS NULL")
         .run(deviceId, ts, record.id);
+      if (bound.changes !== 1) return { error: "code_already_bound_to_another_device" };
     }
     db.prepare("UPDATE sessions SET revoked_at = ? WHERE code_id = ? AND revoked_at IS NULL")
       .run(ts, record.id);
     db.prepare("INSERT INTO sessions(token_hash, code_id, device_id, created_at, last_seen_at) VALUES(?,?,?,?,?)")
       .run(hash(token), record.id, deviceId, ts, ts);
+    return { ok: true };
   });
-  transaction();
+  const result = transaction();
+  if (result.error === "code_already_bound_to_another_device") {
+    return reply.code(409).send({ error: result.error });
+  }
+  if (result.error) return reply.code(403).send({ error: result.error });
 
   return {
     accessToken: token,
